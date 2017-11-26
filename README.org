@@ -1,0 +1,315 @@
+#+TITLE: Incremental Rule Generation
+#+AUTHOR: Atreyee Ghosal
+
+
+* Introduction
+
+
+* Language Extensions And Imports
+
+Firstly, the inevitable laundry list of imports that are necessary whenever one programs in Haskell.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+{-# LANGUAGE ScopedTypeVariables #-}
+
+import qualified Data.ByteString.Lazy as BL
+import Data.Csv
+import qualified Data.Vector as V
+import Data.List
+#+END_SRC
+
+* Setting Up The Datatypes
+  
+First, we set up the basic datatypes.
+
+** Token
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  data Token = Token {
+    name :: String,
+    startIndex :: Int,
+    endIndex :: Int,
+    hasSpace :: Int,
+    posTag :: String,
+    isNE :: Bool
+                     } deriving (Show, Read, Eq)
+
+#+END_SRC
+** Rule
+
+A rule has the following parameters:
+
+  + isInternal :: Bool
+    - Defines whether to look internal to a =Name= or external to it for information
+
+  + contextWindow :: Int
+    - Defines the context window - i.e: how wide is the "window of information" we consider
+
+  + matrixLevel :: Int
+    - Defines the level of the feature matrix to mine for information
+
+  + sequence :: [String]
+    - Defines the "Name" of the rule- i.e the sequence/pattern that forms the rule
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  data Rule = Rule {
+    isInternal :: Bool,
+    contextWindow :: Int,
+    matrixLevel :: Int,
+    sequence :: [String]
+                   } deriving (Show, Read, Eq)
+
+#+END_SRC
+                     
+* Rule-Work Functions
+
+** frameRule
+
+Takes a set of parameters and a list of tokens as arguments and returns a rule.
+
+*** extractNEIndices
+    
+A helper function to make a list of start and end indices of the named entities in the corpus.
+
+(We assume the input is a feature matrix composed of =Token= -type values.)
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  extractNEIndices :: [Token] -> [[Int]]
+  extractNEIndices corpus = extractNEHelper 0 False [] [] $ extractLevel 6 corpus []
+
+  extractNEHelper :: Int -> Bool -> [Int] -> [Int] -> [String] -> [[Int]]
+  extractNEHelper index False startIndexList endIndexList [] = [reverse startIndexList,reverse endIndexList]
+  extractNEHelper index True startIndexList endIndexList [] = [reverse startIndexList,reverse (index - 1 : endIndexList)]
+  extractNEHelper index False startIndexList endIndexList isNEList = case (read (head isNEList) :: Bool)  of
+    False -> extractNEHelper (index+1) False startIndexList endIndexList (tail isNEList)
+    True  -> extractNEHelper (index+1) True (index : startIndexList) endIndexList (tail isNEList)
+  extractNEHelper index True startIndexList endIndexList isNEList = case (read (head isNEList) :: Bool) of
+    False -> extractNEHelper (index+1) False startIndexList ((index - 1) : endIndexList) (tail isNEList)
+    True  -> extractNEHelper (index+1) True startIndexList endIndexList (tail isNEList)
+
+
+
+
+#+END_SRC
+
+*** extractLevel
+
+Extracts the given level of the feature matrix so that we can work with it.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  extractLevel :: Int -> [Token] -> [String] -> [String]
+  extractLevel level [] acc = reverse acc
+  extractLevel level corpus acc = case level of
+    1 -> extractLevel level (tail corpus) ((name (head corpus)) : acc)
+    2 -> extractLevel level (tail corpus) ((show (startIndex (head corpus))) : acc)
+    3 -> extractLevel level (tail corpus) ((show (endIndex (head corpus))) : acc)
+    4 -> extractLevel level (tail corpus) ((show (hasSpace (head corpus))) : acc)
+    5 -> extractLevel level (tail corpus) ((posTag (head corpus)) : acc)
+    6 -> extractLevel level (tail corpus) ((show (isNE (head corpus))) : acc)
+
+#+END_SRC
+
+*** extractWindowHelper
+
+Extracts a window of size 'n' with offset 'offset' away from a (provided) named entity index.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  extractWindowHelper :: Int -> Int -> (Int -> Int -> Int -> Int) -> Int -> [String] -> [String] -> [String]
+  extractWindowHelper 0 offset op namedEntityIndex corpus window = reverse window
+  extractWindowHelper n offset op namedEntityIndex corpus window = if (op n offset namedEntityIndex) < (length corpus)
+    then
+    extractWindowHelper (n-1) offset op namedEntityIndex corpus ((corpus !! (op n offset namedEntityIndex)) : window)
+    else
+    reverse  window
+
+
+#+END_SRC
+*** isNamedEntity
+
+Checks if a particular index of a list belongs to a Named Entity or not.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  isNamedEntity :: Int -> [Int] -> Bool
+  isNamedEntity index namedEntityIndexList =
+    index `elem` namedEntityIndexList
+#+END_SRC
+
+*** extractWindows
+
+Returns a list of windows of size 'n' with offset 'offset' away from the named entities in the corpus.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  extractWindows :: (Int -> Int -> Int -> Int) -> Int -> Int -> Int -> [[Int]] -> [String] -> [String] -> [[String]] -> [[String]]
+  extractWindows op index n offset nerIndexList [] corpus windowList = reverse windowList
+  extractWindows op index n offset nerIndexList levicorpus corpus windowList = if isNamedEntity index (nerIndexList !! 0)
+    then
+    extractWindows op (index + 1) n offset nerIndexList (tail levicorpus) corpus ((extractWindowHelper n offset op index corpus []) : windowList)
+    else
+    extractWindows op (index + 1) n offset nerIndexList (tail levicorpus) corpus windowList
+  
+#+END_SRC
+
+*** windowFreq
+
+To count the frequency of each window in the data, and sort the list by frequency,
+
+#+BEGIN_SRC python :tangle app/fuckThis.py 
+
+  def windowFreq(windowList) :
+
+      wFreq = {}
+
+      for i in range(len(windowList)) :
+
+          hashList = str(windowList[i])
+        
+          if hashList in wFreq :
+              wFreq[hashList] += 1
+
+          else :
+              wFreq[hashList] = 1
+
+      sortedWindows = []
+
+      for j in sorted(wFreq,key=wFreq.get) :
+          sortedWindows.append(eval(j))
+
+      return sortedWindows
+
+
+#+END_SRC
+*** frameRule
+
+Function to convert the sorted list of windows into a rule. 
+
+# finally
+
+#+BEGIN_SRC python :tangle app/fuckThis.py
+
+  def frameRule(numRules, data, function) :
+
+      for i in range(0,numRules) :
+
+          rules[str(data[i])] = {'ruleFunction':function,'numId':0,'falsePos'=0}
+
+      return rules
+
+
+
+#+END_SRC
+
+** runRule
+
+Runs a rule on the given =corpus=.
+
+#+BEGIN_SRC python :tangle app/fuckThis.py
+
+  def runRule(corpusMatrix, rule) :
+
+      # this is an extremely hacked-together function
+      # that just checks for NER starting indices
+      # and returns ALL the NNs after them
+      # i'll write the generalised function later
+
+      pass
+
+
+
+
+
+
+
+#+END_SRC 
+** testRule
+   
+Takes a list of type =Token= (as in, the entire corpus), and returns 
+the number of matches and the number of false positives.
+
+#+BEGIN_SRC python :tangle app/fuckThis.py
+
+
+  def testRule(corpusList, corpusLevel, rule) :
+
+
+
+
+
+
+
+
+
+
+#+END_SRC
+** judgeRule
+
+Based on the previous number of false positives, returns a =Boolean= value indicating whether or not a rule needs to be revised.
+
+#+BEGIN_SRC python :tangle app/fuckThis.py
+
+
+#+END_SRC
+** reviseRule 
+
+Also known as the function that "tightens the sieve", so to speak, by expanding the context window.
+
+Takes a rule, changes the list of parameters by expanding the context window of the rule, returns a new rule.
+
+#+BEGIN_SRC haskell 
+
+
+  reviseRule :: Rule -> Rule
+
+#+END_SRC
+* Main
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  sub :: Int -> Int -> Int -> Int
+  sub n offset namedEntityIndex = (namedEntityIndex - offset - n) 
+
+  main :: IO ()
+  main = let
+    ans = show $ extractWindows sub 2 2 0 (extractNEIndices corpusList) (extractLevel 5 corpusList []) (extractLevel 5 corpusList []) [] 
+    in putStrLn ans
+
+#+END_SRC
+* Python Main
+
+For when I decided "Fuck this shit, I'm hacking it out in python."
+
+#+BEGIN_SRC python :tangle app/fuckThis.py
+
+  if __name__ == '__main__' :
+
+      l = eval(input())
+      windowFreq(l)
+
+#+END_SRC
+* Sample Data
+
+Since the actual TSV files are messed up. The actual =corpusList= will be generated by a Python code generator.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs 
+    
+    corpusList :: [Token]
+    corpusList = [Token "Allylic" 0 7 1 "JJ" False,
+      Token "Oxidation" 8 17 1 "NN" False,
+      Token "Catalyzed" 18 27 1 "VBN" False,
+      Token "by" 28 30 1 "IN" False,
+      Token "Dirhodium(II)" 31 44 1 "NN" True,
+      Token "Tetrakis[ε-cXaprolactamate]" 45 71 1 "NN" True,
+      Token "of" 72 74 1 "IN" False,
+      Token "tert-Butyldimethylsilyl-protected" 75 108 1 "JJ" True,
+      Token "trans-Dehydroandrosterone" 109 134 1 "NN" True]
+#+END_SRC
