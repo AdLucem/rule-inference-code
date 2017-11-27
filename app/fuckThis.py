@@ -42,5 +42,31 @@ def testRule(corpusList, corpusLevel, rule) :
 
 if __name__ == '__main__' :
 
+    import sys
+
     l = eval(input())
-    windowFreq(l)
+
+    # final list of rules
+    allOurRules = []
+
+    # context window size
+    for i in range(4,10) :
+
+        totalMatches = 0
+        totalFalsePos = 0
+        matches = 0
+        falsePos = sys.maxsize
+
+        # number of rules
+        for j in range(1,10) :
+
+            rule = frameRule()
+            newMatches, newFalsePos = testRule(rule)
+            judgement = judgeRule(newMatches, newFalsePos, matches, falsePos)
+
+            if judgement == 0 :
+                allOurRules.append(rule)
+            elif judgement == 1 :
+                expandSieve(rule)
+            elif judgement == -1 :
+                continue
