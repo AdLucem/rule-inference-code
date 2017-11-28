@@ -1,0 +1,172 @@
+#+TITLE: Extract Ngrams
+#+AUTHOR: Atreyee Ghosal
+
+* Introduction
+
+Haskell code to take a set of parameters and extract n-grams from the code and to print them in command line.
+* Language Extensions And Imports
+
+Firstly, the inevitable laundry list of imports that are necessary whenever one programs in Haskell.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+{-# LANGUAGE ScopedTypeVariables #-}
+
+import qualified Data.ByteString.Lazy as BL
+import Data.Csv
+import qualified Data.Vector as V
+import Data.List
+
+import Types
+import Corpus
+import Params
+#+END_SRC
+
+* Setting Up The Datatypes
+  
+First, we set up the basic datatypes.
+
+** Token
+
+#+BEGIN_SRC haskell :tangle app/Types.hs
+
+  module Types where
+
+  data Token = Token {
+    name :: String,
+    posTag :: String,
+    isNE :: Bool
+                     } deriving (Show, Read, Eq)
+
+#+END_SRC
+** Rule
+
+A rule has the following parameters:
+
+  + isInternal :: Bool
+    - Defines whether to look internal to a =Name= or external to it for information
+
+  + contextWindow :: Int
+    - Defines the context window - i.e: how wide is the "window of information" we consider
+
+  + matrixLevel :: Int
+    - Defines the level of the feature matrix to mine for information
+
+  + sequence :: [String]
+    - Defines the "Name" of the rule- i.e the sequence/pattern that forms the rule
+
+#+BEGIN_SRC haskell :tangle app/Types.hs
+
+  data Rule = Rule {
+    isInternal :: Bool,
+    contextWindow :: Int,
+    matrixLevel :: Int,
+    sequence :: [String]
+                   } deriving (Show, Read, Eq)
+
+#+END_SRC
+                     
+
+* Extraction Functions
+
+** extractNEIndices
+    
+A helper function to make a list of start and end indices of the named entities in the corpus.
+
+(We assume the input is a feature matrix composed of =Token= -type values.)
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  extractNEIndices :: [Token] -> [[Int]]
+  extractNEIndices corpus = extractNEHelper 0 False [] [] $ extractLevel 3 corpus []
+
+  extractNEHelper :: Int -> Bool -> [Int] -> [Int] -> [String] -> [[Int]]
+  extractNEHelper index False startIndexList endIndexList [] = [reverse startIndexList,reverse endIndexList]
+  extractNEHelper index True startIndexList endIndexList [] = [reverse startIndexList,reverse (index - 1 : endIndexList)]
+  extractNEHelper index False startIndexList endIndexList isNEList = case (read (head isNEList) :: Bool)  of
+    False -> extractNEHelper (index+1) False startIndexList endIndexList (tail isNEList)
+    True  -> extractNEHelper (index+1) True (index : startIndexList) endIndexList (tail isNEList)
+  extractNEHelper index True startIndexList endIndexList isNEList = case (read (head isNEList) :: Bool) of
+    False -> extractNEHelper (index+1) False startIndexList ((index - 1) : endIndexList) (tail isNEList)
+    True  -> extractNEHelper (index+1) True startIndexList endIndexList (tail isNEList)
+
+
+
+
+#+END_SRC
+
+** extractLevel
+
+Extracts the given level of the feature matrix so that we can work with it.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  extractLevel :: Int -> [Token] -> [String] -> [String]
+  extractLevel level [] acc = reverse acc
+  extractLevel level corpus acc = case level of
+    1 -> extractLevel level (tail corpus) ((name (head corpus)) : acc)
+    2 -> extractLevel level (tail corpus) ((posTag (head corpus)) : acc)
+    3 -> extractLevel level (tail corpus) ((show (isNE (head corpus))) : acc)
+
+#+END_SRC
+
+** extractWindowHelper
+
+Extracts a window of size 'n' with offset 'offset' away from a (provided) named entity index.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  extractWindowHelper :: Int -> Int -> (Int -> Int -> Int -> Int) -> Int -> [String] -> [String] -> [String]
+  extractWindowHelper 0 offset op namedEntityIndex corpus window = reverse window
+  extractWindowHelper n offset op namedEntityIndex corpus window = if (op n offset namedEntityIndex) < (length corpus)
+    then
+    extractWindowHelper (n-1) offset op namedEntityIndex corpus ((corpus !! (op n offset namedEntityIndex)) : window)
+    else
+    reverse  window
+
+
+#+END_SRC
+** isNamedEntity
+
+Checks if a particular index of a list belongs to a Named Entity or not.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+
+  isNamedEntity :: Int -> [Int] -> Bool
+  isNamedEntity index namedEntityIndexList =
+    index `elem` namedEntityIndexList
+#+END_SRC
+
+** extractWindows
+
+Returns a list of windows of size 'n' with offset 'offset' away from the named entities in the corpus.
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  extractWindows :: (Int -> Int -> Int -> Int) -> Int -> Int -> Int -> [[Int]] -> [String] -> [String] -> [[String]] -> [[String]]
+  extractWindows op index n offset nerIndexList [] corpus windowList = reverse windowList
+  extractWindows op index n offset nerIndexList levicorpus corpus windowList = if isNamedEntity index (nerIndexList !! 0)
+    then
+    extractWindows op (index + 1) n offset nerIndexList (tail levicorpus) corpus ((extractWindowHelper n offset op index corpus []) : windowList)
+    else
+    extractWindows op (index + 1) n offset nerIndexList (tail levicorpus) corpus windowList
+  
+#+END_SRC
+
+* Main
+
+
+#+BEGIN_SRC haskell :tangle app/incrRules.hs
+
+  sub :: Int -> Int -> Int -> Int
+  sub n offset namedEntityIndex = (namedEntityIndex - offset - n) 
+
+  main :: IO ()
+  main = let
+    ans = show $ extractWindows sub start size howFar (extractNEIndices corpusList) (extractLevel levelId corpusList []) (extractLevel levelId corpusList []) [] 
+    in putStrLn ans
+
+#+END_SRC

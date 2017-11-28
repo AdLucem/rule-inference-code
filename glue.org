@@ -1,0 +1,34 @@
+#+TITLE: Glue
+#+AUTHOR: Atreyee Ghosal
+
+
+* Introduction
+
+Code to glue the parts of the engine together.
+
+Workflow:
+
+Training Corpus
+--> [Rule Inf. Engine Preprocessor]
+--> [Rule Inference engine]
+--> Rules | Test Corpus --> [CRF Pos Tagger]
+--> [NER-Tagger]
+--> NER-list
+--> [Correction Script]
+   
+* Main Glue File
+
+#+BEGIN_SRC python glue.py
+
+  import sys
+
+  if __name__ == 'main' :
+
+      training_corpus = sys.argv[1]
+      test_corpus = sys.argv[2]
+
+      content = ner_tagger(rule_inf_engine(rule_inf_pre(training_corpus)), crf_pos_tagger(test_corpus))
+
+      print(content)
+
+#+END_SRC

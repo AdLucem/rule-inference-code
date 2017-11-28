@@ -1,0 +1,14 @@
+#+TITLE: Rule Inference Preprocessor
+
+
+* Introduction
+
+To pre-process the text for the rule-inference engine.
+* Imports
+
+#+BEGIN_SRC python :tangle rule_inf_pre.py
+
+  import csv
+
+#+END_SRC
+* 
